@@ -35,9 +35,60 @@ docker compose up -d openclaw-gateway
 ## Next steps
 
 1. Install the **Korpforge** VS Code extension (`korpforge.korpforge`)
-2. Invoke `@korp` in the chat to initialize the agent skills:
-   - `AGENTS.md`, `HEARTBEAT.md`, `IDENTIFY.md`, `SOUL.md`, `TOOLS.md`, `USER.md`
-3. Add personal skills as needed via `@korp /skill add <name>`
+2. Configure the dedicated `vscode` agent in `openclaw.json` (see below)
+3. Invoke `@korp` in the chat — it will inspect your workspace on demand via its own tool protocol
+4. (Optional) Add personal skills via the Skills panel or `korp.skillSources` setting
+
+## Required: dedicated `vscode` agent
+
+The `@korp` VS Code extension talks to a dedicated OpenClaw agent named `vscode`. This agent **must** be declared in your `openclaw.json` so it can:
+
+- Use the model you want (typically a tool-capable, non-reasoning model like Mistral Small)
+- **Skip the bootstrap context injection** — the extension owns its own prompt lifecycle and provides workspace context via its own client-side tools (`workspace_list_files`, `workspace_read_file`, `workspace_find_files`, `workspace_grep`). Without this, every chat turn would inject ~60 KB of bootstrap files (`SOUL.md`, `AGENTS.md`, …) and burn tokens for nothing.
+- **Deny server-side filesystem/exec tools** — file edits and shell are handled inside VS Code, not by the gateway.
+
+Add the following block to `agents.list` in `openclaw.json`:
+
+```json
+{
+  "id": "vscode",
+  "name": "Korp VS Code Agent",
+  "workspace": "/home/node/.openclaw/empty-workspace",
+  "contextInjection": "never",
+  "model": {
+    "primary": "ovhcloud/Mistral-Small-3.2-24B-Instruct-2506"
+  },
+  "identity": {
+    "name": "Korp",
+    "theme": "sovereign AI coding assistant in VS Code"
+  },
+  "tools": {
+    "deny": [
+      "read", "write", "edit", "apply_patch",
+      "list_directory", "exec", "spawn", "shell"
+    ]
+  }
+}
+```
+
+Or apply it in one shot:
+
+```bash
+docker compose run --rm --no-deps openclaw-gateway \
+  node dist/index.js config set --batch-json \
+  '[{"path":"agents.list","value":[{"id":"vscode","name":"Korp VS Code Agent","workspace":"/home/node/.openclaw/empty-workspace","contextInjection":"never","model":{"primary":"ovhcloud/Mistral-Small-3.2-24B-Instruct-2506"},"identity":{"name":"Korp","theme":"sovereign AI coding assistant in VS Code"},"tools":{"deny":["read","write","edit","apply_patch","list_directory","exec","spawn","shell"]}}]}]'
+```
+
+The gateway hot-reloads `openclaw.json` — no restart needed.
+
+### Why a dedicated agent?
+
+| Concern | Default agent | `vscode` agent |
+|---------|---------------|----------------|
+| Bootstrap context injected per turn | ~60 KB | 0 KB |
+| Workspace files | Mounted host dir | Empty (extension provides) |
+| FS / shell tools | Enabled | Denied (VS Code handles) |
+| Model | Whatever default | Pinned non-reasoning, tool-capable |
 
 ## Usage
 
